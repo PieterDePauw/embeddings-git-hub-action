@@ -39,7 +39,7 @@ jobs:
                run: npm run package
 
             -  name: Generate Embeddings
-               uses: ./
+               uses: ./dist/index.js
                with:
                  database-url: ${{ secrets.DATABASE_URL }}
                  openai-api-key: ${{ secrets.OPENAI_API_KEY }}
