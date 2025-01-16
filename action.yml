@@ -1,4 +1,4 @@
-name: "vercel-embeddings-action"
+name: "embeddings-action-bot"
 description: "Generate embeddings from your knowledge base."
 author: "PieterDePauw"
 branding:
