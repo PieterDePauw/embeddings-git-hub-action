@@ -1,0 +1,52 @@
+name: Generate Embeddings
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      refreshAll:
+        description: 'Refresh all embeddings'
+        required: false
+        default: 'false'
+      docsRootPath:
+        description: 'Root path for documentation files'
+        required: false
+        default: 'docs/'
+
+jobs:
+  test-and-generate-embeddings:
+    name: Test and Generate Embeddings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Run end-to-end tests
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npm run test:e2e
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Generate Embeddings
+        uses: ./
+        with:
+          database-url: ${{ secrets.DATABASE_URL }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          docs-root-path: ${{ github.event.inputs.docsRootPath || 'docs/' }}
+
