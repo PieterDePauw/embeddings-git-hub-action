@@ -3,42 +3,84 @@ import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { openai } from "@ai-sdk/openai";
 import { embedMany } from "ai";
-import { SingleBar, Presets } from 'cli-progress';
+import { SingleBar, Presets } from "cli-progress";
 import { generateMarkdownSources } from "../markdown";
 import { type MarkdownSourceType, type Section } from "@/src/types";
-import { OPENAI_USER_ID, OPENAI_EMBEDDING_MODEL, DOCS_ROOT_PATH, IGNORED_FILES, BATCH_SIZE } from "@/src/config";
+import {
+  OPENAI_USER_ID,
+  OPENAI_EMBEDDING_MODEL,
+  DOCS_ROOT_PATH,
+  IGNORED_FILES,
+  BATCH_SIZE,
+} from "@/src/config";
 
 const prisma = new PrismaClient();
-const EMBEDDING_MODEL = openai.embedding(OPENAI_EMBEDDING_MODEL.name, { dimensions: OPENAI_EMBEDDING_MODEL.dimensions, user: OPENAI_USER_ID });
+const EMBEDDING_MODEL = openai.embedding(OPENAI_EMBEDDING_MODEL.name, {
+  dimensions: OPENAI_EMBEDDING_MODEL.dimensions,
+  user: OPENAI_USER_ID,
+});
 
-export function generateVersionInfo(): { refreshVersion: string; refreshDate: Date } {
+export function generateVersionInfo(): {
+  refreshVersion: string;
+  refreshDate: Date;
+} {
   return {
-    refreshVersion: process.env.GITHUB_SHA && process.env.GITHUB_SHA !== "NO_SHA_FOUND" ? process.env.GITHUB_SHA : crypto.randomUUID(),
+    refreshVersion:
+      process.env.GITHUB_SHA && process.env.GITHUB_SHA !== "NO_SHA_FOUND"
+        ? process.env.GITHUB_SHA
+        : crypto.randomUUID(),
     refreshDate: new Date(),
   };
 }
 
-export async function compareChecksum(filePath: string, hash: string): Promise<{ isFileFound: boolean; isFileChanged: boolean | null }> {
+export async function compareChecksum(
+  filePath: string,
+  hash: string,
+): Promise<{ isFileFound: boolean; isFileChanged: boolean | null }> {
   const existingFile = await prisma.file.findUnique({ where: { filePath } });
   if (!existingFile) return { isFileFound: false, isFileChanged: null };
   return { isFileFound: true, isFileChanged: existingFile.fileHash !== hash };
 }
 
-export async function embedSections(sections: Section[]): Promise<{ embeddings: number[][]; tokens: number; sections: Section[] }> {
-  const sectionsData: Section[] = sections.sort((a, b) => a.slug.localeCompare(b.slug));
-  const result = await embedMany({ values: sectionsData.map((section) => section.content), model: EMBEDDING_MODEL.name, maxRetries: OPENAI_EMBEDDING_MODEL.maxRetries });
-  return { embeddings: result.embeddings, tokens: result.usage.tokens, sections: sectionsData };
+export async function embedSections(
+  sections: Section[],
+): Promise<{ embeddings: number[][]; tokens: number; sections: Section[] }> {
+  const sectionsData: Section[] = sections.sort((a, b) =>
+    a.slug.localeCompare(b.slug),
+  );
+  const result = await embedMany({
+    values: sectionsData.map((section) => section.content),
+    model: EMBEDDING_MODEL.name,
+    maxRetries: OPENAI_EMBEDDING_MODEL.maxRetries,
+  });
+  return {
+    embeddings: result.embeddings,
+    tokens: result.usage.tokens,
+    sections: sectionsData,
+  };
 }
 
-export async function processFile(markdownFile: MarkdownSourceType, refreshVersion: string, refreshDate: Date): Promise<void> {
-  const { isFileFound, isFileChanged } = await compareChecksum(markdownFile.path, markdownFile.checksum);
+export async function processFile(
+  markdownFile: MarkdownSourceType,
+  refreshVersion: string,
+  refreshDate: Date,
+): Promise<void> {
+  const { isFileFound, isFileChanged } = await compareChecksum(
+    markdownFile.path,
+    markdownFile.checksum,
+  );
 
   if (isFileFound && !isFileChanged) {
-    await prisma.file.update({ where: { filePath: markdownFile.path }, data: { latestRefresh: refreshDate, latestVersion: refreshVersion } });
+    await prisma.file.update({
+      where: { filePath: markdownFile.path },
+      data: { latestRefresh: refreshDate, latestVersion: refreshVersion },
+    });
     return;
   }
 
-  const { embeddings, tokens, sections } = await embedSections(markdownFile.sections);
+  const { embeddings, tokens, sections } = await embedSections(
+    markdownFile.sections,
+  );
 
   await prisma.$transaction(async (tx) => {
     if (isFileChanged) {
@@ -47,60 +89,106 @@ export async function processFile(markdownFile: MarkdownSourceType, refreshVersi
 
     await tx.file.upsert({
       where: { filePath: markdownFile.path },
-      create: { content: markdownFile.content, filePath: markdownFile.path, fileHash: markdownFile.checksum, latestRefresh: refreshDate, latestVersion: refreshVersion, tokens: tokens },
-      update: { content: markdownFile.content, fileHash: markdownFile.checksum, latestRefresh: refreshDate, latestVersion: refreshVersion, tokens: tokens },
+      create: {
+        content: markdownFile.content,
+        filePath: markdownFile.path,
+        fileHash: markdownFile.checksum,
+        latestRefresh: refreshDate,
+        latestVersion: refreshVersion,
+        tokens: tokens,
+      },
+      update: {
+        content: markdownFile.content,
+        fileHash: markdownFile.checksum,
+        latestRefresh: refreshDate,
+        latestVersion: refreshVersion,
+        tokens: tokens,
+      },
     });
 
     await tx.embedding.createMany({
       data: embeddings.map((embedding, index) => ({
-        filePath: markdownFile.path, chunkIndex: index, header: sections[index].heading, slug: sections[index].slug, content: sections[index].content, embedding: embedding,
+        filePath: markdownFile.path,
+        chunkIndex: index,
+        header: sections[index].heading,
+        slug: sections[index].slug,
+        content: sections[index].content,
+        embedding: embedding,
       })),
     });
   });
 }
 
-export async function cleanupOrphanedData(markdownFiles: MarkdownSourceType[]): Promise<void> {
-  const existingFiles = await prisma.file.findMany({ select: { filePath: true } });
+export async function cleanupOrphanedData(
+  markdownFiles: MarkdownSourceType[],
+): Promise<void> {
+  const existingFiles = await prisma.file.findMany({
+    select: { filePath: true },
+  });
   const existingFilePaths = existingFiles.map((file) => file.filePath);
-  const missingFiles = existingFilePaths.filter((filePath) => !markdownFiles.some((markdownFile) => markdownFile.path === filePath));
+  const missingFiles = existingFilePaths.filter(
+    (filePath) =>
+      !markdownFiles.some((markdownFile) => markdownFile.path === filePath),
+  );
 
   if (missingFiles.length > 0) {
     await prisma.$transaction([
       prisma.file.deleteMany({ where: { filePath: { in: missingFiles } } }),
-      prisma.embedding.deleteMany({ where: { filePath: { in: missingFiles } } }),
+      prisma.embedding.deleteMany({
+        where: { filePath: { in: missingFiles } },
+      }),
     ]);
   }
 }
 
-async function processBatch(markdownFiles: MarkdownSourceType[], refreshVersion: string, refreshDate: Date, progressBar: SingleBar): Promise<void> {
-  await Promise.all(markdownFiles.map(async (file) => {
-    await processFile(file, refreshVersion, refreshDate);
-    progressBar.increment();
-  }));
+async function processBatch(
+  markdownFiles: MarkdownSourceType[],
+  refreshVersion: string,
+  refreshDate: Date,
+  progressBar: SingleBar,
+): Promise<void> {
+  await Promise.all(
+    markdownFiles.map(async (file) => {
+      await processFile(file, refreshVersion, refreshDate);
+      progressBar.increment();
+    }),
+  );
 }
 
 export async function run(): Promise<void> {
   try {
-    const docsRootPath: string = core.getInput("docs-root-path") || DOCS_ROOT_PATH;
-    const shouldRefresh: boolean = core.getInput("should-refresh") === "true" || false;
+    const docsRootPath: string =
+      core.getInput("docs-root-path") || DOCS_ROOT_PATH;
+    const shouldRefresh: boolean =
+      core.getInput("should-refresh") === "true" || false;
 
     const { refreshVersion, refreshDate } = generateVersionInfo();
-    const markdownFiles: MarkdownSourceType[] = await generateMarkdownSources({ docsRootPath: docsRootPath, ignoredFiles: IGNORED_FILES });
+    const markdownFiles: MarkdownSourceType[] = await generateMarkdownSources({
+      docsRootPath: docsRootPath,
+      ignoredFiles: IGNORED_FILES,
+    });
 
     core.info(`Processing ${markdownFiles.length} markdown files`);
 
-    const progressBar = new SingleBar({
-      format: 'Processing files |{bar}| {percentage}% | {value}/{total} Files',
-      barCompleteChar: '\u2588',
-      barIncompleteChar: '\u2591',
-      hideCursor: true
-    }, Presets.shades_classic);
+    const progressBar = new SingleBar(
+      {
+        format:
+          "Processing files |{bar}| {percentage}% | {value}/{total} Files",
+        barCompleteChar: "\u2588",
+        barIncompleteChar: "\u2591",
+        hideCursor: true,
+      },
+      Presets.shades_classic,
+    );
 
     progressBar.start(markdownFiles.length, 0);
 
     if (shouldRefresh) {
       core.info("Refreshing all embeddings");
-      await prisma.$transaction([prisma.file.deleteMany({}), prisma.embedding.deleteMany({})]);
+      await prisma.$transaction([
+        prisma.file.deleteMany({}),
+        prisma.embedding.deleteMany({}),
+      ]);
     }
 
     for (let i = 0; i < markdownFiles.length; i += BATCH_SIZE) {
@@ -128,4 +216,3 @@ export async function run(): Promise<void> {
 if (require.main === module) {
   run();
 }
-

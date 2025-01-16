@@ -1,13 +1,17 @@
-import { SingleBar, Presets } from 'cli-progress';
+import { SingleBar, Presets } from "cli-progress";
 
-describe('Progress Bar Configuration', () => {
-  it('should match the snapshot', () => {
-    const progressBar = new SingleBar({
-      format: 'Processing files |{bar}| {percentage}% | {value}/{total} Files',
-      barCompleteChar: '\u2588',
-      barIncompleteChar: '\u2591',
-      hideCursor: true
-    }, Presets.shades_classic);
+describe("Progress Bar Configuration", () => {
+  it("should match the snapshot", () => {
+    const progressBar = new SingleBar(
+      {
+        format:
+          "Processing files |{bar}| {percentage}% | {value}/{total} Files",
+        barCompleteChar: "\u2588",
+        barIncompleteChar: "\u2591",
+        hideCursor: true,
+      },
+      Presets.shades_classic,
+    );
 
     expect(progressBar.getTotal()).toMatchSnapshot();
     expect(progressBar.getProgress()).toMatchSnapshot();
@@ -15,4 +19,3 @@ describe('Progress Bar Configuration', () => {
     expect(progressBar.eta).toMatchSnapshot();
   });
 });
-

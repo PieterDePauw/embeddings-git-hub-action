@@ -1,6 +1,6 @@
-import { generateVersionInfo } from '@/src/main';
+import { generateVersionInfo } from "@/src/main";
 
-describe('generateVersionInfo', () => {
+describe("generateVersionInfo", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
@@ -12,16 +12,16 @@ describe('generateVersionInfo', () => {
     process.env = originalEnv;
   });
 
-  test('returns correct structure with GITHUB_SHA', () => {
-    process.env.GITHUB_SHA = 'test-sha';
+  test("returns correct structure with GITHUB_SHA", () => {
+    process.env.GITHUB_SHA = "test-sha";
     const result = generateVersionInfo();
     expect(result).toEqual({
-      refreshVersion: 'test-sha',
+      refreshVersion: "test-sha",
       refreshDate: expect.any(Date),
     });
   });
 
-  test('returns correct structure without GITHUB_SHA', () => {
+  test("returns correct structure without GITHUB_SHA", () => {
     delete process.env.GITHUB_SHA;
     const result = generateVersionInfo();
     expect(result).toEqual({
@@ -30,14 +30,13 @@ describe('generateVersionInfo', () => {
     });
   });
 
-  test('returns UUID when GITHUB_SHA is NO_SHA_FOUND', () => {
-    process.env.GITHUB_SHA = 'NO_SHA_FOUND';
+  test("returns UUID when GITHUB_SHA is NO_SHA_FOUND", () => {
+    process.env.GITHUB_SHA = "NO_SHA_FOUND";
     const result = generateVersionInfo();
     expect(result).toEqual({
       refreshVersion: expect.any(String),
       refreshDate: expect.any(Date),
     });
-    expect(result.refreshVersion).not.toBe('NO_SHA_FOUND');
+    expect(result.refreshVersion).not.toBe("NO_SHA_FOUND");
   });
 });
-
