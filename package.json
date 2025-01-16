@@ -9,7 +9,7 @@
         "package": "npx ncc build --source-map --license licenses.txt",
         "test": "jest",
         "prisma": "npx prisma generate",
-        "all": "npm run format && npm run prisma && npm run package"
+        "all": "npm run format && npm run package"
     },
     "main": "src/main.ts",
     "dependencies": {
