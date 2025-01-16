@@ -15,11 +15,10 @@ inputs:
         required: false
         description: "The path to the root of your knowledge base / docs folder"
         default: "docs/"
-    should-refresh":
+    should-refresh:
         required: false
         description: "Whether only changed files should be re-embedded"
-        default: false
+        default: "false"
 runs:
     using: "node20"
-    main: "dist/index.js"
-
+    main: "dist/main.js"
