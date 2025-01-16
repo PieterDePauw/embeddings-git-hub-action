@@ -44,7 +44,7 @@ jobs:
         run: npx prisma generate
 
       - name: Generate Embeddings
-        uses: ./dist/index.js
+        uses: ./
         with:
           database-url: ${{ secrets.DATABASE_URL }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
