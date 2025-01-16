@@ -1,0 +1,32 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model File {
+  id            Int         @id @default(autoincrement())
+  filePath      String      @unique
+  content       String
+  fileHash      String
+  latestRefresh DateTime
+  latestVersion String
+  tokens        Int
+  embeddings    Embedding[]
+}
+
+model Embedding {
+  id         Int     @id @default(autoincrement())
+  filePath   String
+  chunkIndex Int
+  header     String
+  slug       String
+  content    String
+  embedding  Float[]
+  file       File    @relation(fields: [filePath], references: [filePath])
+
+  @@unique([filePath, chunkIndex])
+}
