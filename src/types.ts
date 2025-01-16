@@ -8,7 +8,7 @@ export type MarkdownSourceType = {
   path: string;
   checksum: string;
   meta?: Json;
-  parentPath: string | undefined;
+  parentPath?: string | undefined;
   sections: Section[];
 };
 export type EmbeddingModel = {

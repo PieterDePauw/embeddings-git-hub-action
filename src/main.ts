@@ -1,12 +1,10 @@
 import * as core from "@actions/core";
-import fs from "fs/promises";
-import path from "path";
 import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { openai } from "@ai-sdk/openai";
 import { embedMany } from "ai";
 import { SingleBar, Presets } from "cli-progress";
-import { generateMarkdownSources } from "@/src/markdown";
+import { generateMarkdownSources } from "./markdown";
 import { type MarkdownSourceType, type Section } from "@/src/types";
 import {
   OPENAI_USER_ID,
@@ -52,7 +50,7 @@ export async function embedSections(
   );
   const result = await embedMany({
     values: sectionsData.map((section) => section.content),
-    model: EMBEDDING_MODEL.name,
+    model: EMBEDDING_MODEL,
     maxRetries: OPENAI_EMBEDDING_MODEL.maxRetries,
   });
   return {
@@ -121,7 +119,7 @@ export async function processFile(
   });
 }
 
-async function cleanupOrphanedData(
+export async function cleanupOrphanedData(
   markdownFiles: MarkdownSourceType[],
 ): Promise<void> {
   const existingFiles = await prisma.file.findMany({
@@ -157,28 +155,12 @@ async function processBatch(
   );
 }
 
-async function validateInputs(docsRootPath: string): Promise<void> {
-  try {
-    await fs.access(docsRootPath);
-  } catch (error) {
-    throw new Error(
-      `Invalid docs-root-path: ${docsRootPath}. Directory does not exist or is not accessible.`,
-    );
-  }
-}
-
 export async function run(): Promise<void> {
-  const startTime = Date.now();
-  let processedFiles = 0;
-  let errors = 0;
-
   try {
     const docsRootPath: string =
       core.getInput("docs-root-path") || DOCS_ROOT_PATH;
     const shouldRefresh: boolean =
       core.getInput("should-refresh") === "true" || false;
-
-    await validateInputs(docsRootPath);
 
     const { refreshVersion, refreshDate } = generateVersionInfo();
     const markdownFiles: MarkdownSourceType[] = await generateMarkdownSources({
@@ -186,7 +168,7 @@ export async function run(): Promise<void> {
       ignoredFiles: IGNORED_FILES,
     });
 
-    core.info(`Found ${markdownFiles.length} markdown files to process`);
+    core.info(`Processing ${markdownFiles.length} markdown files`);
 
     const progressBar = new SingleBar(
       {
@@ -212,7 +194,6 @@ export async function run(): Promise<void> {
     for (let i = 0; i < markdownFiles.length; i += BATCH_SIZE) {
       const batch = markdownFiles.slice(i, i + BATCH_SIZE);
       await processBatch(batch, refreshVersion, refreshDate, progressBar);
-      processedFiles += batch.length;
     }
 
     progressBar.stop();
@@ -222,22 +203,8 @@ export async function run(): Promise<void> {
       await cleanupOrphanedData(markdownFiles);
     }
 
-    const embeddings = await prisma.embedding.count();
-
-    const endTime = Date.now();
-    const duration = (endTime - startTime) / 1000; // Convert to seconds
-
     core.info("Embedding generation completed successfully");
-    core.info(`
-Summary:
-- Files processed: ${processedFiles}
-- Errors encountered: ${errors}
-- Total duration: ${duration.toFixed(2)} seconds
-`);
-
-    // Set output values - Removed as per update request
   } catch (error) {
-    errors++;
     core.setFailed(`Error: ${error.message}`);
     console.error(error);
   } finally {

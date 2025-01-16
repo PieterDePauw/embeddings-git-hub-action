@@ -1,218 +1,265 @@
-import * as core from "@actions/core";
+/* eslint-disable import/no-unresolved */
+/* eslint-disable no-shadow */
+/* eslint-disable no-console */
+/* eslint-disable object-shorthand */
+
+// Import modules
+import fs from "fs/promises";
+import path from "path";
 import crypto from "crypto";
-import { PrismaClient } from "@prisma/client";
-import { openai } from "@ai-sdk/openai";
-import { embedMany } from "ai";
-import { SingleBar, Presets } from "cli-progress";
-import { generateMarkdownSources } from "../markdown";
-import { type MarkdownSourceType, type Section } from "@/src/types";
+import GithubSlugger from "github-slugger";
+import { ObjectExpression } from "estree";
+import type { Root, Content } from "mdast";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { mdxFromMarkdown, type MdxjsEsm } from "mdast-util-mdx";
+import { toMarkdown } from "mdast-util-to-markdown";
+import { toString } from "mdast-util-to-string";
+import { mdxjs } from "micromark-extension-mdxjs";
+// import { u } from "unist-builder"; // Not strictly needed if we build manually
+import { filter } from "unist-util-filter";
 import {
-  OPENAI_USER_ID,
-  OPENAI_EMBEDDING_MODEL,
-  DOCS_ROOT_PATH,
-  IGNORED_FILES,
-  BATCH_SIZE,
-} from "@/src/config";
+  type Json,
+  type Section,
+  type MarkdownSourceType,
+  type FileType,
+} from "./types";
 
-const prisma = new PrismaClient();
-const EMBEDDING_MODEL = openai.embedding(OPENAI_EMBEDDING_MODEL.name, {
-  dimensions: OPENAI_EMBEDDING_MODEL.dimensions,
-  user: OPENAI_USER_ID,
-});
+// Define the slugger to ensure the uniqueness of each slug
+const slugger = new GithubSlugger();
 
-export function generateVersionInfo(): {
-  refreshVersion: string;
-  refreshDate: Date;
-} {
-  return {
-    refreshVersion:
-      process.env.GITHUB_SHA && process.env.GITHUB_SHA !== "NO_SHA_FOUND"
-        ? process.env.GITHUB_SHA
-        : crypto.randomUUID(),
-    refreshDate: new Date(),
-  };
-}
+/**
+ * Walks a directory recursively to gather all files.
+ */
+export async function walk(
+  directory: string,
+  parentPath?: string,
+): Promise<FileType[]> {
+  const immediateFiles = await fs.readdir(directory);
+  const recursiveFiles = await Promise.all(
+    immediateFiles.map(async (file) => {
+      const fullPath = path.join(directory, file);
+      const fileStats = await fs.stat(fullPath);
 
-export async function compareChecksum(
-  filePath: string,
-  hash: string,
-): Promise<{ isFileFound: boolean; isFileChanged: boolean | null }> {
-  const existingFile = await prisma.file.findUnique({ where: { filePath } });
-  if (!existingFile) return { isFileFound: false, isFileChanged: null };
-  return { isFileFound: true, isFileChanged: existingFile.fileHash !== hash };
-}
+      if (fileStats.isDirectory()) {
+        const docPath = `${path.basename(fullPath)}.mdx`;
+        const nextParentPath = immediateFiles.includes(docPath)
+          ? path.join(path.dirname(fullPath), docPath)
+          : parentPath;
+        return walk(fullPath, nextParentPath);
+      }
 
-export async function embedSections(
-  sections: Section[],
-): Promise<{ embeddings: number[][]; tokens: number; sections: Section[] }> {
-  const sectionsData: Section[] = sections.sort((a, b) =>
-    a.slug.localeCompare(b.slug),
-  );
-  const result = await embedMany({
-    values: sectionsData.map((section) => section.content),
-    model: EMBEDDING_MODEL.name,
-    maxRetries: OPENAI_EMBEDDING_MODEL.maxRetries,
-  });
-  return {
-    embeddings: result.embeddings,
-    tokens: result.usage.tokens,
-    sections: sectionsData,
-  };
-}
+      if (fileStats.isFile()) {
+        return [{ path: fullPath, parentPath: parentPath }];
+      }
 
-export async function processFile(
-  markdownFile: MarkdownSourceType,
-  refreshVersion: string,
-  refreshDate: Date,
-): Promise<void> {
-  const { isFileFound, isFileChanged } = await compareChecksum(
-    markdownFile.path,
-    markdownFile.checksum,
-  );
-
-  if (isFileFound && !isFileChanged) {
-    await prisma.file.update({
-      where: { filePath: markdownFile.path },
-      data: { latestRefresh: refreshDate, latestVersion: refreshVersion },
-    });
-    return;
-  }
-
-  const { embeddings, tokens, sections } = await embedSections(
-    markdownFile.sections,
-  );
-
-  await prisma.$transaction(async (tx) => {
-    if (isFileChanged) {
-      await tx.embedding.deleteMany({ where: { filePath: markdownFile.path } });
-    }
-
-    await tx.file.upsert({
-      where: { filePath: markdownFile.path },
-      create: {
-        content: markdownFile.content,
-        filePath: markdownFile.path,
-        fileHash: markdownFile.checksum,
-        latestRefresh: refreshDate,
-        latestVersion: refreshVersion,
-        tokens: tokens,
-      },
-      update: {
-        content: markdownFile.content,
-        fileHash: markdownFile.checksum,
-        latestRefresh: refreshDate,
-        latestVersion: refreshVersion,
-        tokens: tokens,
-      },
-    });
-
-    await tx.embedding.createMany({
-      data: embeddings.map((embedding, index) => ({
-        filePath: markdownFile.path,
-        chunkIndex: index,
-        header: sections[index].heading,
-        slug: sections[index].slug,
-        content: sections[index].content,
-        embedding: embedding,
-      })),
-    });
-  });
-}
-
-export async function cleanupOrphanedData(
-  markdownFiles: MarkdownSourceType[],
-): Promise<void> {
-  const existingFiles = await prisma.file.findMany({
-    select: { filePath: true },
-  });
-  const existingFilePaths = existingFiles.map((file) => file.filePath);
-  const missingFiles = existingFilePaths.filter(
-    (filePath) =>
-      !markdownFiles.some((markdownFile) => markdownFile.path === filePath),
-  );
-
-  if (missingFiles.length > 0) {
-    await prisma.$transaction([
-      prisma.file.deleteMany({ where: { filePath: { in: missingFiles } } }),
-      prisma.embedding.deleteMany({
-        where: { filePath: { in: missingFiles } },
-      }),
-    ]);
-  }
-}
-
-async function processBatch(
-  markdownFiles: MarkdownSourceType[],
-  refreshVersion: string,
-  refreshDate: Date,
-  progressBar: SingleBar,
-): Promise<void> {
-  await Promise.all(
-    markdownFiles.map(async (file) => {
-      await processFile(file, refreshVersion, refreshDate);
-      progressBar.increment();
+      return [];
     }),
   );
+  console.log(
+    `Processed ${recursiveFiles.length} items in directory: ${directory}`,
+  );
+  return recursiveFiles.flat().sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export async function run(): Promise<void> {
-  try {
-    const docsRootPath: string =
-      core.getInput("docs-root-path") || DOCS_ROOT_PATH;
-    const shouldRefresh: boolean =
-      core.getInput("should-refresh") === "true" || false;
+/**
+ * Extracts an object from an ESTree ObjectExpression node.
+ */
+export function getObjectFromExpression(node: ObjectExpression): Json {
+  return node.properties.reduce<Json>((obj, property) => {
+    if (
+      property.type === "Property" &&
+      property.key.type === "Identifier" &&
+      property.value.type === "Literal"
+    ) {
+      obj[property.key.name] = property.value.value as
+        | string
+        | number
+        | boolean
+        | null;
+    }
+    return obj;
+  }, {});
+}
 
-    const { refreshVersion, refreshDate } = generateVersionInfo();
-    const markdownFiles: MarkdownSourceType[] = await generateMarkdownSources({
-      docsRootPath: docsRootPath,
-      ignoredFiles: IGNORED_FILES,
-    });
-
-    core.info(`Processing ${markdownFiles.length} markdown files`);
-
-    const progressBar = new SingleBar(
-      {
-        format:
-          "Processing files |{bar}| {percentage}% | {value}/{total} Files",
-        barCompleteChar: "\u2588",
-        barIncompleteChar: "\u2591",
-        hideCursor: true,
-      },
-      Presets.shades_classic,
+/**
+ * Extracts metadata from the MDX file's `meta` ESM export.
+ */
+export function extractMetaExport(mdxTree: Root): Json | undefined {
+  // > Find the `meta` export node in the MDX tree
+  const metaExportNode = mdxTree.children.find((node): node is MdxjsEsm => {
+    return (
+      node.type === "mdxjsEsm" &&
+      node.data?.estree?.body[0]?.type === "ExportNamedDeclaration" &&
+      node.data.estree.body[0].declaration?.type === "VariableDeclaration" &&
+      node.data.estree.body[0].declaration.declarations[0]?.id.type ===
+        "Identifier" &&
+      node.data.estree.body[0].declaration.declarations[0].id.name === "meta"
     );
+  });
 
-    progressBar.start(markdownFiles.length, 0);
-
-    if (shouldRefresh) {
-      core.info("Refreshing all embeddings");
-      await prisma.$transaction([
-        prisma.file.deleteMany({}),
-        prisma.embedding.deleteMany({}),
-      ]);
-    }
-
-    for (let i = 0; i < markdownFiles.length; i += BATCH_SIZE) {
-      const batch = markdownFiles.slice(i, i + BATCH_SIZE);
-      await processBatch(batch, refreshVersion, refreshDate, progressBar);
-    }
-
-    progressBar.stop();
-
-    if (!shouldRefresh) {
-      core.info("Cleaning up orphaned data");
-      await cleanupOrphanedData(markdownFiles);
-    }
-
-    core.info("Embedding generation completed successfully");
-  } catch (error) {
-    core.setFailed(`Error: ${error.message}`);
-    console.error(error);
-  } finally {
-    await prisma.$disconnect();
+  // > If there's no `meta` export node, return undefined
+  if (!metaExportNode) {
+    return undefined;
   }
+
+  // > Extract the `ObjectExpression` from the `meta` export node
+  const objectExpression =
+    (metaExportNode.data?.estree?.body[0]?.type === "ExportNamedDeclaration" &&
+      metaExportNode.data.estree.body[0].declaration?.type ===
+        "VariableDeclaration" &&
+      metaExportNode.data.estree.body[0].declaration.declarations[0]?.id
+        .type === "Identifier" &&
+      metaExportNode.data.estree.body[0].declaration.declarations[0].id.name ===
+        "meta" &&
+      metaExportNode.data.estree.body[0].declaration.declarations[0].init
+        ?.type === "ObjectExpression" &&
+      metaExportNode.data.estree.body[0].declaration.declarations[0].init) ||
+    undefined;
+
+  // > If there's no `ObjectExpression`, return undefined
+  if (!objectExpression) {
+    return undefined;
+  }
+
+  // > Return the object extracted from the `ObjectExpression`
+  return getObjectFromExpression(objectExpression);
 }
 
-// This line allows the function to be called when the script is run directly
-if (require.main === module) {
-  run();
+/**
+ * Splits an mdast tree into sections based on a predicate.
+ */
+export function splitTreeBy(
+  tree: Root,
+  predicate: (node: Content) => boolean,
+): Root[] {
+  return (tree.children as Content[]).reduce<Root[]>((sections, node) => {
+    const lastSection = sections.at(-1);
+
+    if (!lastSection || predicate(node)) {
+      // Manually build a 'root' node to avoid the unist-builder overload problem:
+      sections.push({
+        type: "root",
+        children: [node],
+      } as unknown as Root);
+    } else {
+      (lastSection.children as Content[]).push(node);
+    }
+
+    return sections;
+  }, []);
+}
+
+/**
+ * Parses a markdown heading with optional custom anchor.
+ */
+export function parseHeading(heading: string): {
+  heading: string;
+  customAnchor?: string;
+} {
+  const match = heading.match(/(.*) *\[#(.*)\]/);
+  if (match && match[1] && match[2]) {
+    return { heading: match[1], customAnchor: match[2] };
+  }
+  if (match && match[1]) {
+    return { heading: match[1] };
+  }
+  return { heading };
+}
+
+/**
+ * Processes and returns an array of sections from an mdast tree.
+ */
+export function processSections(mdTree: Root): Section[] {
+  return splitTreeBy(mdTree, (node) => node.type === "heading").map(
+    (sectionTree) => {
+      const [firstNode] = sectionTree.children;
+      if (firstNode.type !== "heading") {
+        return {
+          content: toMarkdown(sectionTree as any),
+          heading: "",
+          slug: "",
+        };
+      }
+
+      const { heading, customAnchor } = parseHeading(
+        toString(firstNode as any),
+      );
+
+      return {
+        content: toMarkdown(sectionTree as any),
+        heading,
+        slug: slugger.slug(customAnchor ?? heading),
+      };
+    },
+  );
+}
+
+/**
+ * Generates sources from markdown files in a directory.
+ */
+export async function generateMarkdownSources({
+  docsRootPath,
+  ignoredFiles = ["pages/404.mdx"],
+}: {
+  docsRootPath: string;
+  ignoredFiles: string[];
+}): Promise<MarkdownSourceType[]> {
+  const files: FileType[] = await walk(docsRootPath);
+  const markdownFiles: FileType[] = files.filter(
+    ({ path }) => /\.mdx?$/.test(path) && !ignoredFiles.includes(path),
+  );
+
+  const sources: MarkdownSourceType[] = await Promise.all(
+    markdownFiles.map(async ({ path: filePath, parentPath }) => {
+      const content = await fs.readFile(filePath, "utf8");
+      const checksum = crypto
+        .createHash("sha256")
+        .update(content)
+        .digest("base64");
+
+      const mdxTree: Root = fromMarkdown(content, {
+        extensions: [mdxjs()],
+        mdastExtensions: [mdxFromMarkdown()],
+      }) as unknown as Root;
+
+      const meta = extractMetaExport(mdxTree) || {};
+
+      // filter(...) returns Node | undefined, so cast to Root
+      const mdTree = filter(
+        mdxTree as any,
+        (node) =>
+          ![
+            "mdxjsEsm",
+            "mdxJsxFlowElement",
+            "mdxJsxTextElement",
+            "mdxFlowExpression",
+            "mdxTextExpression",
+          ].includes(node.type),
+      ) as unknown as Root;
+
+      if (!mdTree) {
+        return {
+          content,
+          path: filePath,
+          checksum,
+          meta,
+          parentPath,
+          sections: [],
+        };
+      }
+
+      const sections = processSections(mdTree);
+      return {
+        content,
+        path: filePath,
+        checksum,
+        meta,
+        parentPath,
+        sections,
+      };
+    }),
+  );
+
+  console.log(`Discovered ${sources.length} pages`);
+  return sources;
 }
