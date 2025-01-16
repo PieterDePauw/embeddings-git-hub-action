@@ -159,6 +159,10 @@ const config = {
         "fromEnvVar": null,
         "value": "darwin-arm64",
         "native": true
+      },
+      {
+        "fromEnvVar": null,
+        "value": "debian-openssl-3.0.x"
       }
     ],
     "previewFeatures": [],
@@ -183,8 +187,8 @@ const config = {
       }
     }
   },
-  "inlineSchema": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\ngenerator client {\n  provider = \"prisma-client-js\"\n}\n\nmodel File {\n  id            Int         @id @default(autoincrement())\n  filePath      String      @unique\n  content       String\n  fileHash      String\n  latestRefresh DateTime\n  latestVersion String\n  tokens        Int\n  embeddings    Embedding[]\n}\n\nmodel Embedding {\n  id         Int     @id @default(autoincrement())\n  filePath   String\n  chunkIndex Int\n  header     String\n  slug       String\n  content    String\n  embedding  Float[]\n  file       File    @relation(fields: [filePath], references: [filePath])\n\n  @@unique([filePath, chunkIndex])\n}\n",
-  "inlineSchemaHash": "037814fa2ac9e8ff838e6c147a264439fbf86317c84f6633ecc18f7fbf22aecd",
+  "inlineSchema": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\ngenerator client {\n  provider      = \"prisma-client-js\"\n  binaryTargets = [\"native\", \"debian-openssl-3.0.x\"]\n}\n\nmodel File {\n  id            Int         @id @default(autoincrement())\n  filePath      String      @unique\n  content       String\n  fileHash      String\n  latestRefresh DateTime\n  latestVersion String\n  tokens        Int\n  embeddings    Embedding[]\n}\n\nmodel Embedding {\n  id         Int     @id @default(autoincrement())\n  filePath   String\n  chunkIndex Int\n  header     String\n  slug       String\n  content    String\n  embedding  Float[]\n  file       File    @relation(fields: [filePath], references: [filePath])\n\n  @@unique([filePath, chunkIndex])\n}\n",
+  "inlineSchemaHash": "e7bf752c3e5c8eea8aace1308196d594bb46e367dd203b06d9a2ddc78efaee52",
   "copyEngine": true
 }
 
@@ -224,6 +228,10 @@ Object.assign(exports, Prisma)
 // file annotations for bundling tools to include these files
 __nccwpck_require__.ab + "client/libquery_engine-darwin-arm64.dylib.node"
 path.join(process.cwd(), "node_modules/.prisma/client/libquery_engine-darwin-arm64.dylib.node")
+
+// file annotations for bundling tools to include these files
+path.join(__dirname, "libquery_engine-debian-openssl-3.0.x.so.node");
+path.join(process.cwd(), "node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node")
 // file annotations for bundling tools to include these files
 path.join(__dirname, "schema.prisma");
 path.join(process.cwd(), "node_modules/.prisma/client/schema.prisma")
